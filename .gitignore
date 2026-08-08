@@ -1,0 +1,124 @@
+# ---------------------------------------------------------------------------
+# Bip39-Generator-C++ (.gitignore)
+# Airgapped BIP-39 mnemonic / HD-wallet generator (C++ / Dear ImGui).
+# ---------------------------------------------------------------------------
+
+# ===========================================================================
+# Internal / non-public documents (keep out of the public repository)
+# ===========================================================================
+/PLAN_*.md
+/NOTAS*.md
+/README.local.md
+docs/internal/
+*.internal.md
+/tests
+# ===========================================================================
+# Secrets & key material (never commit real keys, seeds or passphrases)
+# ===========================================================================
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+*.mnemonic
+*.seed
+*seed*.txt
+*passphrase*.txt
+
+# ===========================================================================
+# Build outputs
+# ===========================================================================
+/build*/
+/_deps/
+/cmake-build-*/
+/CMakeCache.txt
+/CMakeFiles/
+/Testing/
+CMakeUserPresets.json
+compile_commands.json
+
+# ===========================================================================
+# Compiler / preprocessed / coverage / profiling artifacts
+# ===========================================================================
+*.o
+*.obj
+*.slo
+*.lo
+*.o.d
+*.i
+*.gch
+*.pch
+*.gcda
+*.gcno
+*.gcov
+*.prof
+*.profraw
+*.profdata
+
+# ===========================================================================
+# Libraries / executables
+# ===========================================================================
+*.a
+*.la
+*.lai
+*.lib
+*.so
+*.so.*
+*.dylib
+*.dll
+*.exe
+*.out
+*.app
+*.mod
+*.smod
+
+# ===========================================================================
+# Tests / logs / core dumps
+# ===========================================================================
+*.log
+valgrind*.txt
+*.vgcore
+vgcore.*
+lastTest.log
+core
+core.*
+
+# ===========================================================================
+# Editor / IDE / OS noise
+# ===========================================================================
+.vscode/
+.idea/
+*.iml
+*.user
+*.user.*
+.cache/
+.ccls-cache/
+*~
+*.swp
+*.swo
+*.swn
+*.bak
+*.orig
+*.rej
+*.old
+.DS_Store
+.AppleDouble
+._*
+.LSOverride
+Thumbs.db
+Desktop.ini
+
+# ===========================================================================
+# Packaging
+# ===========================================================================
+*.tar
+*.tar.gz
+*.tgz
+*.zip
+*.deb
+*.rpm
+*.dmg

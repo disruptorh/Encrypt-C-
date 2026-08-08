@@ -1,0 +1,67 @@
+---
+# clang-tidy para el código propio (src/). Objetivo: solo checks que aportan
+# valor de seguridad/correctitud sobre C++20 moderno; el estilo puro (nombres
+# cortos, llaves de una línea, [[nodiscard]] cosmetical) se excluye porque
+# produce ruido sin mejorar la seguridad.
+#
+# Familias activas:
+#   cert-*            reglas CERT C++ (kdf, crypto, errores, excepciones)
+#   bugprone-*        errores de programación sospechosos
+#   clang-analyzer-*  análisis estático del compilador
+#   performance-*     costes evitables (copias, allocs, temporales)
+#   readability-*     con las exclusiones de estilo enumeradas
+#   modernize-*       con las exclusiones de estilo enumeradas
+Checks: >
+  -*,
+  cert-*,
+  bugprone-*,
+  clang-analyzer-*,
+  performance-*,
+  readability-*,
+  modernize-*,
+  -cert-err58-cpp,
+  -cert-err33-c,
+  -cert-dcl59-cpp,
+  -bugprone-branch-clone,
+  -bugprone-easily-swappable-parameters,
+  -bugprone-implicit-widening-of-multiplication-result,
+  -bugprone-casting-unsigned-arithmetic,
+  -bugprone-infinite-loop,
+  -bugprone-narrowing-conversions,
+  -bugprone-swapped-arguments,
+  -bugprone-reserved-identifier,
+  -clang-analyzer-security.insecureAPI.strcpy,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling,
+  -performance-no-int-to-ptr,
+  -readability-braces-around-statements,
+  -readability-identifier-length,
+  -readability-container-size-empty,
+  -readability-magic-numbers,
+  -readability-avoid-const-params-in-decls,
+  -readability-uppercase-literal-suffix,
+  -readability-implicit-bool-conversion,
+  -readability-isolate-declaration,
+  -readability-identifier-naming,
+  -readability-function-cognitive-complexity,
+  -readability-misleading-indentation,
+  -readability-redundant-declaration,
+  -readability-simplify-boolean-expr,
+  -readability-convert-member-functions-to-static,
+  -readability-redundant-access-specifiers,
+  -modernize-use-nodiscard,
+  -modernize-avoid-c-arrays,
+  -modernize-use-trailing-return-type,
+  -modernize-use-auto,
+  -modernize-return-braced-init-list,
+  -modernize-raw-string-literal,
+  -modernize-pass-by-value,
+  -modernize-use-equals-default,
+  -modernize-use-nullptr,
+  -modernize-use-default-member-init
+WarningsAsErrors: '*'
+HeaderFilterRegex: 'src/(secure_mem|crypto|ui|clipboard|security)/.*'
+CheckOptions:
+  - key: bugprone-narrowing-conversions.WarnOnIntegerNarrowingConversion
+    value: 'false'
+  - key: cert-err58-cpp.AllowedExceptions
+    value: '.*_api'
