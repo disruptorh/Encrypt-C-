@@ -10,12 +10,18 @@
 
 namespace clipboard {
 
-// Secure X11 clipboard owner.
+// Secure X11 clipboard (simple, normal selection owner).
 //
-// The sensitive text is stored in mlock'ed, auto-zeroed memory owned by this
-// object (it is never handed to GLFW or X, only served from the private buffer
-// on selection requests). On timeout (or explicit clear) the ownership is
-// released and the buffer is zeroed.
+// On copy, the sensitive text is stored in an mlock'ed, auto-zeroed buffer and
+// served to other apps through the standard X11 CLIPBOARD selection using a
+// single property write — the same mechanism any normal Linux clipboard uses
+// (no INCR). On timeout (or explicit clear) ownership is released and the
+// buffer is zeroed.
+//
+// On paste, the current selection is requested and read with a single
+// GetWindowProperty; the result is delivered into an mlock'ed buffer. Content
+// larger than the X server's request limit is not transferable this way; the
+// app refuses the copy and reports the size instead of failing silently.
 class secure_clipboard {
  public:
   secure_clipboard() = default;
@@ -32,8 +38,20 @@ class secure_clipboard {
   void shutdown();
 
   // Publish `text` as the CLIPBOARD selection. Any previously held content is
-  // wiped first. The auto-clear timer is (re)started.
-  void set_text(const char* text, std::size_t len);
+  // wiped first. The auto-clear timer is (re)started. Returns false (and keeps
+  // the previous selection) if the content is beyond the single-property limit.
+  bool set_text(const char* text, std::size_t len);
+
+  // Request the current CLIPBOARD selection content from its owner. The result
+  // is delivered asynchronously: poll() must be called until is_pasting() turns
+  // false, then paste() returns the data. Returns false if the request could
+  // not be initiated (no selection owner / clipboard disabled).
+  bool request_paste();
+
+  // Retrieve the pasted content after request_paste() completes. Returns a
+  // pointer valid until the next set_text()/clear_now()/request_paste(). Sets
+  // `out_len` to the byte length. Returns nullptr if no data is available.
+  const char* paste(std::size_t& out_len);
 
   // Wipe the buffer and clear the selection immediately.
   void clear_now();
@@ -50,7 +68,12 @@ class secure_clipboard {
   bool has_pending() const { return owned_ && len_ != 0; }
   std::uint64_t expires_at_ms() const { return expires_at_ms_; }
 
+  // True while a paste request is in flight and the data has not arrived yet.
+  bool is_pasting() const { return paste_pending_; }
+
+  // Largest single-property transfer supported (matches the X request limit).
   static constexpr std::uint64_t kDefaultTimeoutMs = 30'000;
+  static constexpr std::size_t kMaxClipboardBytes = 8 * 1024 * 1024;
 
  private:
   void claim_selection();
@@ -60,6 +83,7 @@ class secure_clipboard {
   void handle_event(XEvent& ev);
   void handle_selection_request(XEvent& ev);
   void handle_selection_clear();
+  void handle_selection_notify(XEvent& ev);
   void respond_with_text(::Time timestamp, ::Window requestor, Atom property,
                          Atom target);
   void respond_with_targets(::Time timestamp, ::Window requestor, Atom property);
@@ -72,13 +96,21 @@ class secure_clipboard {
   Atom text_atom_ = 0;
   Atom targets_atom_ = 0;
   Atom ts_atom_ = 0;
+  Atom incr_atom_ = 0;
+  Atom paste_prop_atom_ = 0;
 
+  // Write-side buffer (secure, auto-zeroed).
   secure_mem::byte_buffer buffer_;
   std::size_t len_ = 0;
   bool active_ = false;
   bool owned_ = false;
   std::uint64_t timeout_ms_ = kDefaultTimeoutMs;
   std::uint64_t expires_at_ms_ = 0;
+
+  // Read-side result (secure, auto-zeroed).
+  secure_mem::byte_buffer paste_buffer_;
+  std::size_t paste_len_ = 0;
+  bool paste_pending_ = false;
 };
 
 }  // namespace clipboard

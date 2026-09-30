@@ -21,6 +21,17 @@ std::uint64_t app::now_ms() {
 app::~app() { shutdown(); }
 
 bool app::init() {
+  // Route ImGui's copy callback (Ctrl+C in a text field) through the secure,
+  // auto-clearing clipboard so accidental copies are also protected. The paste
+  // callback (Ctrl+V) is deliberately left to the GLFW backend: it is
+  // synchronous, whereas X11 selection reads are asynchronous (and INCR
+  // transfers are multi-roundtrip). Long-content pasting is provided by the
+  // explicit "Pegar desde el portapapeles" buttons, which use the asynchronous
+  // secure read path and land directly in the mlock'ed editing buffers.
+  ImGuiIO& io = ImGui::GetIO();
+  io.SetClipboardTextFn = &app::set_clipboard_callback;
+  io.ClipboardUserData = this;
+
   // Pre-grow the editing buffers once so ImGui never triggers a reallocation
   // of a locked buffer mid-edit (reallocation would move locked pages).
   password_.reserve(kPasswordCapacity);
@@ -52,17 +63,20 @@ void app::shutdown() {
   envelope_output_.wipe();
   plaintext_output_.wipe();
   kdf_salt_b64_.wipe();
+  paste_target_ = nullptr;
 }
 
 void app::frame() {
   const std::uint64_t now = now_ms();
   clipboard_.poll(now);
+  poll_paste(now);
   poll_copies(now);
   if (mode_ == mode::encrypt) {
     render_encrypt_screen();
   } else {
     render_decrypt_screen();
   }
+  render_file_dialog();
 }
 
 void app::render_mode_switch() {
@@ -86,6 +100,7 @@ void app::switch_mode(mode next) {
   password_.wipe();
   confirm_.wipe();
   clear_outputs();
+  dialog_close();
   last_error_.clear();
   status_.clear();
   mode_ = next;
@@ -105,14 +120,73 @@ void app::begin_copy(copy_state& target, const char* text, std::size_t len,
   copy_output_.active = false;
   last_error_.clear();
   status_.clear();
-  clipboard_.set_text(text, len);
-  if (clipboard_.is_active()) {
+  if (clipboard_.set_text(text, len)) {
     target.active = true;
     target.expires_at_ms = now + clipboard_.timeout_ms();
     status_ = "Copiado. El portapapeles se autolimpia en unos segundos.";
+  } else if (clipboard_.is_active()) {
+    target.active = false;
+    last_error_ =
+        "El contenido supera el límite del portapapeles del sistema "
+        "(8 MiB). Cópialo en menos fragmentos o guarda el archivo.";
   } else {
+    target.active = false;
     last_error_ = "No hay servidor X; no se pudo copiar.";
   }
+}
+
+// ImGui callback: called for Ctrl+C / Ctrl+X from a text field. `user_data` is
+// the app instance (set via io.ClipboardUserData). Redirect to the secure,
+// auto-clearing clipboard so accidental copies are also protected.
+void app::set_clipboard_callback(void* user_data, const char* text) {
+  if (user_data == nullptr || text == nullptr) return;
+  app* self = static_cast<app*>(user_data);
+  self->begin_copy(self->copy_output_, text, std::strlen(text), now_ms());
+}
+
+// Paste-from-X11 into a target secure string (used by the "Pegar" buttons).
+void app::paste_into(secure_mem::secure_string* target) {
+  last_error_.clear();
+  status_.clear();
+  paste_target_ = nullptr;
+  if (!clipboard_.is_active()) {
+    last_error_ = "No hay servidor X; no se pudo pegar.";
+    return;
+  }
+  if (clipboard_.is_pasting()) {
+    paste_target_ = target;
+    status_ = "Recibiendo del portapapeles...";
+    return;
+  }
+  if (!clipboard_.request_paste()) {
+    last_error_ =
+        "El portapapeles está vacío o el dueño no respondió; inténtalo de "
+        "nuevo.";
+    return;
+  }
+  paste_target_ = target;
+  status_ = "Recibiendo del portapapeles...";
+}
+
+// Called every frame: if a paste request has completed, deliver the data to
+// the target secure string set by paste_into().
+void app::poll_paste(std::uint64_t /*now*/) {
+  if (paste_target_ == nullptr) return;
+  if (!clipboard_.is_active() || clipboard_.is_pasting()) return;
+  std::size_t len = 0;
+  const char* data = clipboard_.paste(len);
+  if (data == nullptr) {
+    last_error_ =
+        "No se pudo leer del portapapeles. Si el contenido es muy grande, "
+        "pégalo en partes.";
+    status_.clear();
+    paste_target_ = nullptr;
+    return;
+  }
+  paste_target_->assign(data, len);
+  status_ = "Pegado.";
+  last_error_.clear();
+  paste_target_ = nullptr;
 }
 
 void app::poll_copies(std::uint64_t now) {
@@ -221,6 +295,7 @@ void app::reset() {
   plaintext_.wipe();
   envelope_input_.wipe();
   clear_outputs();
+  dialog_close();
   use_pepper_ = false;
   profile_maximum_ = false;
   last_error_.clear();

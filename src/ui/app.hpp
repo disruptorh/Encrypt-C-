@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "clipboard/secure_clipboard.hpp"
 #include "crypto/kdf.hpp"
@@ -68,12 +69,29 @@ class app {
   };
   copy_state copy_output_;
 
+  // Optional destination for the "Pegar" buttons' asynchronous paste.
+  secure_mem::secure_string* paste_target_ = nullptr;
+
+  // In-app file save/load dialog (offline: no external helpers, no fork). Used
+  // to export the envelope to a user-chosen .txt file and to import one back.
+  struct file_dialog {
+    bool open = false;
+    bool save_mode = true;
+    secure_mem::secure_string* payload = nullptr;  // save: text to write
+    std::string dir = ".";                          // current directory
+    std::string name = "";                          // file name field
+    std::vector<std::string> entries;
+    std::vector<bool> is_dir;
+    std::string error;
+    bool refresh = true;     // rebuild `entries` next frame
+    bool focus_name = false; // focus the file name field on the next frame
+  };
+  file_dialog file_dialog_;
+
   static constexpr std::size_t kPasswordCapacity = 512;
   static constexpr std::size_t kPepperCapacity = 512;
   static constexpr std::size_t kPlaintextCapacity = 64 * 1024;
   static constexpr std::size_t kEnvelopeInputCapacity = 1024 * 1024;
-  static constexpr std::uint64_t kClipboardTimeoutMs =
-      clipboard::secure_clipboard::kDefaultTimeoutMs;
 
   void render_encrypt_screen();
   void render_decrypt_screen();
@@ -82,6 +100,15 @@ class app {
   void begin_copy(copy_state& target, const char* text, std::size_t len,
                   std::uint64_t now);
   void poll_copies(std::uint64_t now);
+  void poll_paste(std::uint64_t now);
+  void paste_into(secure_mem::secure_string* target);
+  void open_save_dialog(secure_mem::secure_string* payload);
+  void open_load_dialog(secure_mem::secure_string* target);
+  void render_file_dialog();
+  void refresh_file_dialog();
+  void dialog_save();
+  void dialog_load();
+  void dialog_close();
   void do_encrypt();
   void do_decrypt();
   void switch_mode(mode next);
@@ -89,6 +116,7 @@ class app {
   void reset();
 
   static std::uint64_t now_ms();
+  static void set_clipboard_callback(void* user_data, const char* text);
 };
 
 }  // namespace ui

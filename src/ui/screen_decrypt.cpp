@@ -53,6 +53,13 @@ void app::render_decrypt_screen() {
             static_cast<int>(envelope_input_.capacity()), ImVec2(-1, 180))) {
       envelope_input_.set_len(std::strlen(envelope_input_.data()));
     }
+    if (ImGui::Button("Pegar sobre desde el portapapeles##envelope_dec",
+                      ImVec2(-1, 0))) {
+      paste_into(&envelope_input_);
+    }
+    if (ImGui::Button("Cargar sobre desde archivo (.txt)", ImVec2(-1, 0))) {
+      open_load_dialog(&envelope_input_);
+    }
 
     ImGui::Spacing();
     if (ImGui::Button("Descifrar##dec", ImVec2(-1, 0))) {
@@ -72,9 +79,10 @@ void app::render_decrypt_screen() {
       ImGui::Spacing();
       ImGui::Separator();
       ImGui::TextUnformatted("Texto descifrado:");
-      if (ImGui::BeginChild("plaintext_display", ImVec2(0, 180),
-                            ImGuiChildFlags_Border,
-                            ImGuiWindowFlags_HorizontalScrollbar)) {
+      if (ImGui::BeginChild(
+              "plaintext_display", ImVec2(0, 200), ImGuiChildFlags_Border,
+              ImGuiWindowFlags_HorizontalScrollbar |
+                  ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
         ImGui::TextWrapped("%.*s", static_cast<int>(plaintext_output_.size()),
                            plaintext_output_.data());
       }
@@ -85,6 +93,8 @@ void app::render_decrypt_screen() {
                    plaintext_output_.size(), now);
       }
       render_copy_status(copy_output_, now);
+      ImGui::TextDisabled(
+          "Si el texto es muy largo, cópialo por fragmentos.");
     }
   }
   ImGui::End();

@@ -84,7 +84,27 @@ la versión Kotlin; no da pistas al atacante).
   disco de Mesa/NVIDIA; ImGui no persiste estado (`IniFilename=nullptr`).
 - Portapapeles seguro (`clipboard/secure_clipboard.cpp`): el texto sensible
   vive en memoria mlock'ed propia y solo se sirve ante peticiones de selección
-  X11; se borra tras un timeout (30 s por defecto) o al cambiar de pantalla.
+  X11; se borra tras un timeout (30 s por defecto), al cambiar de pantalla o
+  cuando otra app reclama la selección (`SelectionClear`).
+  - **Copiado normal con una sola propiedad**: las copias pequeñas (Ctrl+C en
+    un campo de texto, "Copiar texto descifrado") se sirven con un único
+    `XChangeProperty`, el mecanismo estándar de cualquier portapapeles Linux.
+    Los errores X11 benignos sobre ventanas de otro proceso
+    (BadWindow/BadAtom) se ignoran para que un pegado concurrente nunca aborte
+    la aplicación.
+  - **El sobre cifrado NO se exporta por portapapeles.** Para no depender de
+    las limitaciones y comportamientos variables del X11 (tamaño de propiedad,
+    INCR de otros clientes), el sobre se exporta escribiendo un archivo `.txt`
+    en la ubicación y con el nombre que el usuario elige mediante un diálogo
+    integrado (`src/ui/file_dialog.cpp`, sin helpers externos ni `fork`).
+  - **Pegado seguro**: `request_paste()` lee la selección actual para traer
+    texto largo al interior de la app (botones "Pegar desde el portapapeles").
+    Si el dueño externo negocia el protocolo INCR (contenido > ~256 KB), el
+    pegado se cancela limpiamente y se informa al usuario de que use un
+    fragmento menor o un archivo.
+  - **Importación por archivo**: "Cargar sobre desde archivo (.txt)" lee el
+    sobre directamente desde disco (límite 1 MiB, coherencia con la capacidad
+    del campo de edición) en los buffers mlock'ed de edición.
 
 ## Presupuesto de memoria
 

@@ -109,6 +109,9 @@ add_executable(encrypt_app
   src/security/seccomp.hpp
   src/ui/app.cpp
   src/ui/app.hpp
+  src/ui/file_io.cpp
+  src/ui/file_io.hpp
+  src/ui/file_dialog.cpp
   src/ui/screen_encrypt.cpp
   src/ui/screen_decrypt.cpp
   ${IMGUI_DIR}/imgui.cpp
@@ -177,6 +180,19 @@ if(ENCRYPT_BUILD_TESTS)
     "-Wl,--wrap=sodium_malloc,--wrap=sodium_free,--wrap=sodium_mlock")
 
   add_test(NAME encrypt_tests COMMAND encrypt_tests)
+
+  # File I/O used by the envelope export/import dialog (pure logic, no GUI).
+  add_executable(file_io_tests
+    tests/test_file_io.cpp
+    src/ui/file_io.cpp
+  )
+  target_include_directories(file_io_tests PRIVATE
+    ${CMAKE_SOURCE_DIR}/tests
+    ${CMAKE_SOURCE_DIR}/src
+  )
+  target_compile_features(file_io_tests PRIVATE cxx_std_20)
+
+  add_test(NAME file_io_tests COMMAND file_io_tests)
 
   add_test(
     NAME no_network_symbols

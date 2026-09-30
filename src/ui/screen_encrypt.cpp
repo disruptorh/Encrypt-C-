@@ -22,7 +22,7 @@ void app::render_encrypt_screen() {
     ImGui::TextWrapped(
         "Todo se procesa localmente. El sobre Base64 contiene todo lo "
         "necesario para descifrar, menos tu contraseña y el pepper (si lo "
-        "usas). Nada se escribe a disco.");
+        "usas). Guárdalo en un archivo .txt en la ubicación que elijas.");
     ImGui::Spacing();
 
     ImGui::TextUnformatted("Contraseña:");
@@ -61,6 +61,9 @@ void app::render_encrypt_screen() {
             static_cast<int>(plaintext_.capacity()), ImVec2(-1, 180))) {
       plaintext_.set_len(std::strlen(plaintext_.data()));
     }
+    if (ImGui::Button("Pegar desde el portapapeles##plaintext_enc", ImVec2(-1, 0))) {
+      paste_into(&plaintext_);
+    }
 
     ImGui::Spacing();
     const bool std_profile = !profile_maximum_;
@@ -91,19 +94,20 @@ void app::render_encrypt_screen() {
       ImGui::Spacing();
       ImGui::Separator();
       ImGui::TextUnformatted(
-          "Sobre (cópialo y guárdalo fuera de esta máquina):");
-      if (ImGui::BeginChild("envelope_display", ImVec2(0, 180),
-                            ImGuiChildFlags_Border,
-                            ImGuiWindowFlags_HorizontalScrollbar)) {
+          "Sobre (guárdalo en un archivo y llévalo a la máquina de destino):");
+      if (ImGui::BeginChild(
+              "envelope_display", ImVec2(0, 240), ImGuiChildFlags_Border,
+              ImGuiWindowFlags_HorizontalScrollbar |
+                  ImGuiWindowFlags_AlwaysVerticalScrollbar)) {
         ImGui::TextWrapped("%s", envelope_output_.data());
       }
       ImGui::EndChild();
-      const std::uint64_t now = now_ms();
-      if (ImGui::Button("Copiar sobre", ImVec2(-1, 0))) {
-        begin_copy(copy_output_, envelope_output_.data(),
-                   envelope_output_.size(), now);
+      if (ImGui::Button("Guardar sobre en archivo (.txt)", ImVec2(-1, 0))) {
+        open_save_dialog(&envelope_output_);
       }
-      render_copy_status(copy_output_, now);
+      ImGui::TextDisabled(
+          "Elige la ubicación y el nombre; el sobre se exporta como texto "
+          "Base64 en un archivo .txt.");
     }
   }
   ImGui::End();

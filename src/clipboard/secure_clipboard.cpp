@@ -9,12 +9,18 @@
 namespace clipboard {
 
 namespace {
-constexpr int kTargetsIndex = 0;
-constexpr int kUtf8Index = 1;
-constexpr int kStringIndex = 2;
-constexpr int kTextIndex = 3;
-constexpr int kTimestampIndex = 4;
-constexpr int kTargetCount = 5;
+
+constexpr int kTargetCount = 4;
+
+// X11 error handler: a peer may destroy its window just as we write a property
+// to it, which Xlib would report as a fatal error and abort the whole process.
+// Those failures (BadWindow / BadAtom) are benign for the clipboard path, so
+// ignore them instead.
+int benign_x_error(Display* /*dpy*/, XErrorEvent* err) {
+  (void)err;
+  return 0;
+}
+
 }  // namespace
 
 bool secure_clipboard::init() {
@@ -25,6 +31,7 @@ bool secure_clipboard::init() {
     active_ = false;
     return false;
   }
+  XSetErrorHandler(benign_x_error);
 
   win_ = XCreateSimpleWindow(dpy_, DefaultRootWindow(dpy_), 0, 0, 1, 1, 0, 0, 0);
   clip_atom_ = XInternAtom(dpy_, "CLIPBOARD", False);
@@ -33,6 +40,8 @@ bool secure_clipboard::init() {
   text_atom_ = XInternAtom(dpy_, "TEXT", False);
   targets_atom_ = XInternAtom(dpy_, "TARGETS", False);
   ts_atom_ = XInternAtom(dpy_, "_SECURE_CLIPBOARD_TS", False);
+  incr_atom_ = XInternAtom(dpy_, "INCR", False);
+  paste_prop_atom_ = XInternAtom(dpy_, "_SECURE_CLIPBOARD_PASTE", False);
   // Needed for current_server_time() to receive the PropertyNotify event that
   // carries the server timestamp.
   XSelectInput(dpy_, win_, PropertyChangeMask);
@@ -51,15 +60,43 @@ void secure_clipboard::shutdown() {
   active_ = false;
 }
 
-void secure_clipboard::set_text(const char* text, std::size_t len) {
-  if (!active_) return;
-  // Wipe anything previously held before taking the new content.
+bool secure_clipboard::set_text(const char* text, std::size_t len) {
+  if (!active_) return false;
+  if (len > kMaxClipboardBytes) return false;  // too large for a single property
+
+  // Wipe anything previously held before taking the new content (including any
+  // pending paste read buffer).
   buffer_.zero();
+  paste_pending_ = false;
   buffer_.resize(len + 1, /*preserve=*/false);
   if (len != 0) std::memcpy(buffer_.data(), text, len);
   buffer_.data()[len] = '\0';
   len_ = len;
   claim_selection();
+  return true;
+}
+
+bool secure_clipboard::request_paste() {
+  if (!active_) return false;
+  const ::Window owner = XGetSelectionOwner(dpy_, clip_atom_);
+  if (owner == None) return false;
+  // Wipe any previous paste result before starting a new read.
+  paste_buffer_.zero();
+  paste_len_ = 0;
+  paste_pending_ = true;
+  // Delete any stale paste property so the owner writes fresh.
+  XDeleteProperty(dpy_, win_, paste_prop_atom_);
+  XConvertSelection(dpy_, clip_atom_, utf8_atom_, paste_prop_atom_, win_,
+                    CurrentTime);
+  XFlush(dpy_);
+  return true;
+}
+
+const char* secure_clipboard::paste(std::size_t& out_len) {
+  if (paste_pending_) return nullptr;  // not yet arrived; call poll()
+  if (paste_len_ == 0) return nullptr;
+  out_len = paste_len_;
+  return reinterpret_cast<const char*>(paste_buffer_.data());
 }
 
 void secure_clipboard::claim_selection() {
@@ -112,6 +149,9 @@ void secure_clipboard::clear_now() {
   owned_ = false;
   buffer_.zero();
   len_ = 0;
+  paste_buffer_.zero();
+  paste_len_ = 0;
+  paste_pending_ = false;
   expires_at_ms_ = 0;
 }
 
@@ -144,6 +184,9 @@ void secure_clipboard::handle_event(XEvent& ev) {
       break;
     case SelectionClear:
       handle_selection_clear();
+      break;
+    case SelectionNotify:
+      handle_selection_notify(ev);
       break;
     default:
       break;
@@ -200,8 +243,11 @@ void secure_clipboard::handle_selection_request(XEvent& ev) {
 void secure_clipboard::respond_with_targets(::Time timestamp, ::Window requestor,
                                             Atom property) {
   Atom targets[kTargetCount] = {
-      targets_atom_, utf8_atom_, string_atom_, text_atom_,
-      XInternAtom(dpy_, "TIMESTAMP", False)};
+      targets_atom_,
+      utf8_atom_,
+      string_atom_,
+      text_atom_,
+  };
   XChangeProperty(dpy_, requestor, property, XA_ATOM, 32, PropModeReplace,
                   reinterpret_cast<unsigned char*>(targets), kTargetCount);
 
@@ -220,7 +266,8 @@ void secure_clipboard::respond_with_targets(::Time timestamp, ::Window requestor
 void secure_clipboard::respond_with_text(::Time timestamp, ::Window requestor,
                                          Atom property, Atom target) {
   const unsigned char* data =
-      (len_ != 0) ? reinterpret_cast<const unsigned char*>(buffer_.data()) : nullptr;
+      (len_ != 0) ? reinterpret_cast<const unsigned char*>(buffer_.data())
+                  : nullptr;
   const std::size_t n = len_;
   XChangeProperty(dpy_, requestor, property, target, 8, PropModeReplace,
                   const_cast<unsigned char*>(data), static_cast<int>(n));
@@ -235,6 +282,55 @@ void secure_clipboard::respond_with_text(::Time timestamp, ::Window requestor,
   reply.time = timestamp;
   XSendEvent(dpy_, requestor, False, 0, reinterpret_cast<XEvent*>(&reply));
   XFlush(dpy_);
+}
+
+// ---- Paste (read from external clipboard owners) ----
+
+void secure_clipboard::handle_selection_notify(XEvent& ev) {
+  XSelectionEvent* sel = &ev.xselection;
+  if (sel->selection != clip_atom_) return;
+
+  if (sel->property == None) {
+    // Owner refused the target or selection is empty.
+    paste_pending_ = false;
+    return;
+  }
+
+  // Peek the delivered property type first. If the owner negotiated the INCR
+  // protocol (content too large for a single property), this clipboard does not
+  // support transferring it; cancel cleanly instead of misreading the announce
+  // header as the data.
+  Atom actual_type = None;
+  int actual_format = 0;
+  unsigned long peek_n = 0;
+  unsigned long peek_after = 0;
+  unsigned char* peek = nullptr;
+  XGetWindowProperty(dpy_, sel->requestor, sel->property, 0, 0, False,
+                     AnyPropertyType, &actual_type, &actual_format, &peek_n,
+                     &peek_after, &peek);
+  if (peek != nullptr) XFree(peek);
+  if (actual_type == incr_atom_) {
+    XDeleteProperty(dpy_, sel->requestor, sel->property);
+    XFlush(dpy_);
+    paste_pending_ = false;
+    return;
+  }
+
+  unsigned long total_n = 0;
+  unsigned long bytes_after = 0;
+  unsigned char* data = nullptr;
+  XGetWindowProperty(dpy_, sel->requestor, sel->property, 0, 0x7fffffff,
+                     /*delete=*/True, AnyPropertyType, &actual_type,
+                     &actual_format, &total_n, &bytes_after, &data);
+  paste_buffer_.zero();
+  if (data != nullptr) {
+    paste_buffer_.resize(total_n + 1);
+    if (total_n != 0) std::memcpy(paste_buffer_.data(), data, total_n);
+    paste_buffer_.data()[total_n] = '\0';
+    paste_len_ = total_n;
+    XFree(data);
+  }
+  paste_pending_ = false;
 }
 
 }  // namespace clipboard
